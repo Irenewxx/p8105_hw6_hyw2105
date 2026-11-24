@@ -1,0 +1,72 @@
+---
+title: "p8105_hw6_hyw2105.Rmd"
+author: "Irene Wen"
+output: github_document
+date: "2026-11-24"
+---
+
+```{r setup, include = FALSE}
+library(tidyverse)
+library(p8105.datasets)
+library(modelr)
+
+knitr::opts_chunk$set(
+  fig.width = 7,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(
+  theme_minimal() +
+    theme(legend.position = "bottom")
+)
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+set.seed(1)
+```
+
+
+# Problem 1: Logistic Regression for Homicide Resolution
+
+## Data Import and Cleaning
+
+## Logistic Regression for Baltimore
+
+## Logistic Regression Across Cities
+
+## Comparison of City-Specific Odds Ratios
+
+
+# Problem 2: Bootstrap Inference for Weather Data
+
+## Data Preparation
+
+## Linear Regression Model
+
+## Bootstrap Sampling and Model Fitting
+
+## Bootstrap Distributions
+
+## Bootstrap Confidence Intervals
+
+
+# Problem 3: Birthweight Regression and Cross Validation
+
+## Data Import and Cleaning
+
+## Proposed Regression Model
+
+## Residual Diagnostics
+
+## Alternative Regression Models
+
+## Monte Carlo Cross Validation
+
+## Comparison of Prediction Error
