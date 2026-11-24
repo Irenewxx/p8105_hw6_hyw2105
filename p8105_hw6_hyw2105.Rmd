@@ -281,15 +281,238 @@ precision of this association varied across cities.
 # Problem 2: Bootstrap Inference for Weather Data
 
 ## Data Preparation
+```{r p2-01-weather-data}
+data("weather_df")
+
+weather_model_df =
+  weather_df |>
+  select(tmax, tmin, prcp) |>
+  drop_na()
+```
+
+```{r p2-02-check-weather}
+weather_model_df |>
+  summarize(
+    n_observations = n(),
+    mean_tmax = mean(tmax),
+    mean_tmin = mean(tmin),
+    mean_prcp = mean(prcp)
+  ) |>
+  knitr::kable(digits = 3)
+
+tibble(
+  n_original = nrow(weather_df),
+  n_excluded = nrow(weather_df) - nrow(weather_model_df),
+  n_final = nrow(weather_model_df),
+  n_missing = sum(is.na(weather_model_df))
+) |>
+  knitr::kable()
+```
+
+The Central Park weather data were obtained from the `p8105.datasets` package 
+and initially contained 2,190 observations and six variables. 
+Maximum daily temperature (`tmax`) was treated as the outcome, 
+with minimum daily temperature (`tmin`) and precipitation (`prcp`) included 
+as predictors. After excluding 19 observations with missing values in 
+any of these three variables, the final analytical dataset consisted of 
+2,171 complete observations.
+
+The mean maximum and minimum daily temperatures were 17.865 and 10.096, respectively, 
+and the mean precipitation was 32.810 on the original measurement scale. 
+The precipitation distribution appeared right-skewed, with a median 
+of zero and a mean substantially higher than the median. All three variables 
+were retained on their original measurement scales for the subsequent regression 
+and bootstrap analyses.
+
 
 ## Linear Regression Model
+```{r p2-03-original-model}
+weather_fit =
+  weather_model_df |>
+  lm(tmax ~ tmin + prcp, data = _)
+
+weather_fit |>
+  broom::tidy() |>
+  select(term, estimate, std.error, p.value) |>
+  knitr::kable(digits = 3)
+```
+
+```{r p2-04-original-r-squared}
+weather_fit |>
+  broom::glance() |>
+  select(r.squared) |>
+  knitr::kable(digits = 3)
+```
+
+I fitted a multiple linear regression model using maximum daily temperature 
+as the outcome and minimum daily temperature and precipitation as predictors. 
+Holding precipitation constant, a one-unit increase in minimum temperature 
+was associated with an approximately 1.017-unit increase in expected maximum 
+temperature. Holding minimum temperature constant, a one-unit increase 
+in precipitation was associated with an approximately 0.006-unit decrease 
+in expected maximum temperature.
+
+The model had an R-squared of 0.941, indicating that approximately 94.1% of 
+the observed variation in maximum temperature was explained by the two predictors. 
+The estimates from the original dataset served as a reference for the subsequent 
+bootstrap analysis.
+
 
 ## Bootstrap Sampling and Model Fitting
+```{r p2-05-bootstrap-models}
+set.seed(1)
+
+weather_bootstrap_df =
+  weather_model_df |>
+  modelr::bootstrap(n = 5000) |>
+  mutate(
+    model_fits = map(
+      strap,
+      \(df) lm(tmax ~ tmin + prcp, data = df)
+    ),
+    tidy_results = map(model_fits, broom::tidy),
+    glance_results = map(model_fits, broom::glance)
+  )
+```
+
+```{r p2-06-extract-estimates}
+weather_boot_results =
+  weather_bootstrap_df |>
+  select(.id, tidy_results, glance_results) |>
+  unnest(glance_results) |>
+  select(
+    .id,
+    r_squared = r.squared,
+    tidy_results
+  ) |>
+  unnest(tidy_results) |>
+  filter(term %in% c("tmin", "prcp")) |>
+  select(.id, r_squared, term, estimate) |>
+  pivot_wider(
+    names_from = term,
+    values_from = estimate
+  ) |>
+  mutate(
+    beta_ratio = tmin / prcp
+  ) |>
+  select(.id, r_squared, beta_ratio)
+```
+
+```{r p2-07-check-bootstrap}
+weather_boot_results |>
+  summarize(
+    n_bootstrap = n(),
+    n_valid_r_squared = sum(is.finite(r_squared)),
+    n_valid_beta_ratio = sum(is.finite(beta_ratio))
+  ) |>
+  knitr::kable()
+```
+
+I initially tested the bootstrap procedure using 10 samples to verify the re-sampling, 
+model fitting, and result extraction workflow. I then generated 5,000 bootstrap 
+samples using `modelr::bootstrap()`, with each sample containing 2,171 observations 
+drawn with replacement from the original analytical dataset.
+
+The same multiple linear regression model was fitted to each bootstrap sample 
+using the `map()` function. I used `broom::glance()` to extract R-squared 
+and `broom::tidy()` to obtain the regression coefficients. The ratio of the 
+minimum temperature coefficient to the precipitation coefficient was calculated 
+separately for each bootstrap sample.
+
+The procedure successfully produced 5,000 finite estimates of R-squared and 5,000 
+finite estimates of the coefficient ratio, with no missing or non-finite results. 
+These estimates were retained for examining the empirical bootstrap distributions 
+and constructing 95% percentile confidence intervals.
+
+
 
 ## Bootstrap Distributions
+```{r p2-08-bootstrap-long}
+weather_boot_long =
+  weather_boot_results |>
+  rename(
+    "R-squared" = r_squared,
+    "Coefficient ratio" = beta_ratio
+  ) |>
+  pivot_longer(
+    cols = -.id,
+    names_to = "quantity",
+    values_to = "estimate"
+  )
+```
+
+```{r p2-09-bootstrap-density, fig.width = 9, fig.height = 4}
+weather_boot_long |>
+  ggplot(aes(x = estimate)) +
+  geom_density(fill = "steelblue", alpha = 0.4) +
+  facet_wrap(~ quantity, scales = "free") +
+  labs(
+    title = "Bootstrap Distributions of Regression Quantities",
+    subtitle = "Based on 5,000 bootstrap samples",
+    x = "Bootstrap estimate",
+    y = "Density"
+  )
+```
+
+The bootstrap distribution of R-squared was approximately bell-shaped with 
+slight negative skewness and was tightly concentrated around 0.941, suggesting that 
+the proportion of variation explained by the model was relatively stable across 
+the 5,000 bootstrap samples.
+
+In contrast, the bootstrap distribution of the coefficient ratio was noticeably 
+left-skewed, with a peak around −170 and a long tail extending toward more 
+negative values. This asymmetry may be attributable to the relatively 
+small magnitude of the precipitation coefficient in the denominator, 
+making the ratio sensitive to small changes in its estimate across bootstrap samples.
+
+These empirical distributions illustrate how sampling uncertainty can differ 
+between regression quantities. In particular, the asymmetry of the coefficient 
+ratio distribution highlights the usefulness of bootstrap percentile confidence 
+intervals, which do not require a normal approximation to the sampling distribution.
+
+
 
 ## Bootstrap Confidence Intervals
+```{r p2-10-bootstrap-ci}
+weather_boot_ci =
+  weather_boot_long |>
+  group_by(quantity) |>
+  summarize(
+    mean_estimate = mean(estimate),
+    bootstrap_se = sd(estimate),
+    ci_lower = quantile(estimate, 0.025),
+    ci_upper = quantile(estimate, 0.975)
+  )
 
+weather_boot_ci |>
+  knitr::kable(
+    digits = 3,
+    col.names = c(
+      "Quantity",
+      "Bootstrap Mean",
+      "Bootstrap SE",
+      "95% CI Lower",
+      "95% CI Upper"
+    )
+  )
+```
+
+Based on the 5,000 bootstrap samples, the mean estimate of R-squared was 0.941, 
+with a bootstrap standard error of 0.003 and a 95% percentile confidence interval 
+of (0.934, 0.947). The relatively narrow confidence interval suggests that 
+the proportion of variation in maximum temperature explained by the regression model 
+was stable across the resampled datasets.
+
+The mean estimate of the coefficient ratio was −185.024, with a bootstrap 
+standard error of 38.551 and a 95% percentile confidence interval 
+of (−274.795, −125.484). The asymmetry of this interval is consistent 
+with the left-skewed bootstrap distribution observed in the preceding density plot.
+
+Both confidence intervals were constructed using the 2.5th and 97.5th percentiles 
+of their respective empirical bootstrap distributions. These findings demonstrate 
+the usefulness of bootstrapping for quantifying uncertainty in regression 
+quantities, particularly when their sampling distributions are asymmetric 
+or difficult to derive analytically.
 
 # Problem 3: Birthweight Regression and Cross Validation
 
