@@ -517,13 +517,352 @@ or difficult to derive analytically.
 # Problem 3: Birthweight Regression and Cross Validation
 
 ## Data Import and Cleaning
+```{r p3-01-birthweight-import}
+birthweight_raw =
+  read_csv("data/birthweight.csv")
+```
+
+```{r p3-02-birthweight-clean}
+birthweight_df =
+  birthweight_raw |>
+  mutate(
+    babysex = factor(
+      babysex,
+      levels = c(1, 2),
+      labels = c("Male", "Female")
+    ),
+    frace = factor(
+      frace,
+      levels = c(1, 2, 3, 4, 8, 9),
+      labels = c(
+        "White", "Black", "Asian",
+        "Puerto Rican", "Other", "Unknown"
+      )
+    ),
+    mrace = factor(
+      mrace,
+      levels = c(1, 2, 3, 4, 8),
+      labels = c(
+        "White", "Black", "Asian",
+        "Puerto Rican", "Other"
+      )
+    ),
+    malform = factor(
+      malform,
+      levels = c(0, 1),
+      labels = c("Absent", "Present")
+    )
+  )
+```
+
+```{r p3-03-birthweight-validation}
+birthweight_df |>
+  summarize(
+    n_observations = n(),
+    n_variables = ncol(birthweight_df),
+    n_missing = sum(is.na(birthweight_df))
+  ) |>
+  knitr::kable()
+
+birthweight_df |>
+  count(babysex) |>
+  knitr::kable()
+```
+
+The birthweight dataset was imported from a local CSV file and contained 4,342 
+observations and 20 variables. Infant sex, maternal race, paternal race, 
+and the presence of congenital malformations were converted from numeric 
+codes to categorical variables according to the definitions provided in the assignment. 
+Male infants, White parents, and the absence of congenital malformations were 
+set as the respective reference categories. All remaining quantitative variables 
+were retained in their original numeric form.
+
+No missing values were identified after recoding, so all 4,342 observations 
+were retained for subsequent analysis. The dataset included 2,230 male 
+infants (51.4%) and 2,112 female infants (48.6%). Congenital malformations 
+were uncommon, with only 15 infants (0.35%) recorded as having malformations.
 
 ## Proposed Regression Model
+```{r p3-04-model-data}
+birthweight_model_df =
+  birthweight_df |>
+  select(
+    bwt, bhead, blength, gaweeks,
+    babysex, ppwt, wtgain, smoken
+  ) |>
+  drop_na()
+```
+
+I developed a multiple linear regression model based on a hypothesized set of factors 
+associated with birthweight. The model included infant head circumference, 
+birth length, gestational age, and sex, as well as maternal pre-pregnancy weight, 
+gestational weight gain, and smoking during pregnancy.
+
+These predictors were selected to capture infant size, pregnancy duration, 
+and maternal characteristics relevant to fetal growth. Rather than relying 
+on an automated variable-selection procedure, I prioritized a reasonably 
+parsimonious and interpretable model. The primary objective was to 
+predict birthweight using information available at delivery rather than 
+to estimate causal effects.
+
+
+```{r p3-05-proposed-model}
+proposed_fit =
+  birthweight_model_df |>
+  lm(
+    bwt ~ bhead + blength + gaweeks + babysex +
+      ppwt + wtgain + smoken,
+    data = _
+  )
+
+proposed_fit |>
+  broom::tidy(conf.int = TRUE) |>
+  select(
+    term, estimate, conf.low,
+    conf.high, p.value
+  ) |>
+  mutate(
+    p.value = if_else(
+      p.value < 0.001,
+      "<0.001",
+      as.character(round(p.value, 3))
+    )
+  ) |>
+  knitr::kable(digits = 3)
+```
+
+The proposed multiple linear regression model was fitted using all 4,342 observations. 
+After adjusting for the other predictors, greater head circumference, birth length, 
+gestational age, maternal pre-pregnancy weight, and gestational weight gain 
+were associated with higher expected birthweight.
+
+Holding all other predictors constant, a one-centimeter increase in head 
+circumference was associated with an approximately 136.6-gram increase 
+in expected birthweight (95% CI: 129.7–143.5), while a one-centimeter 
+increase in birth length was associated with a 78.3-gram increase 
+(95% CI: 74.3–82.4). Maternal smoking was negatively associated with birthweight, 
+with each additional cigarette smoked per day corresponding to an approximately 
+2.2-gram decrease in expected birthweight (95% CI: −3.3 to −1.1). 
+Female infants had an estimated birthweight 31.0 grams higher than male 
+infants after adjustment for the other predictors.
+
+The model had an R-squared and adjusted R-squared of approximately 0.699, 
+indicating that it explained 69.9% of the observed variation in birthweight. 
+Although the model showed a reasonably good fit to the observed data, residual 
+diagnostics and cross-validation were needed to assess model adequacy and 
+predictive performance on held-out observations.
+
 
 ## Residual Diagnostics
+```{r p3-06-residual-plot}
+birthweight_model_df |>
+  modelr::add_predictions(proposed_fit) |>
+  modelr::add_residuals(proposed_fit) |>
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed",
+    color = "red"
+  ) +
+  labs(
+    title = "Residuals versus Fitted Birthweight",
+    x = "Fitted birthweight (grams)",
+    y = "Residuals (grams)"
+  )
+```
+
+The residuals were generally centered around zero, particularly within the range 
+where most fitted birthweights were concentrated. However, the residual plot showed 
+some systematic patterns at lower fitted values and variation in residual spread 
+across the range of predictions, suggesting possible departures from the linearity 
+and constant variance assumptions.
+
+Several observations had relatively large residuals, particularly positive residuals 
+exceeding 2,000 grams, indicating that the model substantially underestimated 
+birthweight for some infants. A small number of fitted birthweights were also 
+negative, which is physiologically implausible and highlights a limitation of 
+the linear regression model at the lower end of the prediction range.
+
+Although the proposed model explained approximately 69.9% of the observed 
+variation in birthweight, the residual diagnostics suggest that its fit was 
+not equally adequate across all observations. The model was retained for 
+comparison with the two alternative models using cross-validated prediction error.
 
 ## Alternative Regression Models
+```{r p3-07-alternative-models}
+main_effects_fit =
+  birthweight_model_df |>
+  lm(
+    bwt ~ blength + gaweeks,
+    data = _
+  )
+
+interaction_fit =
+  birthweight_model_df |>
+  lm(
+    bwt ~ bhead * blength * babysex,
+    data = _
+  )
+```
+The proposed model was compared with two alternative regression models specified 
+in the assignment. The first alternative included birth length and gestational 
+age as main effects only. The second included head circumference, birth length, 
+infant sex, and all corresponding two-way and three-way interactions. 
+These three candidate models were subsequently evaluated using cross-validated 
+prediction error.
+
 
 ## Monte Carlo Cross Validation
+```{r p3-08-cv-splits}
+set.seed(1)
+
+cv_df =
+  crossv_mc(birthweight_model_df, 100) |>
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)
+  )
+```
+
+```{r p3-09-cv-models}
+cv_df =
+  cv_df |>
+  mutate(
+    proposed_fit = map(
+      train,
+      \(df) lm(
+        bwt ~ bhead + blength + gaweeks + babysex +
+          ppwt + wtgain + smoken,
+        data = df
+      )
+    ),
+    main_effects_fit = map(
+      train,
+      \(df) lm(
+        bwt ~ blength + gaweeks,
+        data = df
+      )
+    ),
+    interaction_fit = map(
+      train,
+      \(df) lm(
+        bwt ~ bhead * blength * babysex,
+        data = df
+      )
+    )
+  )
+```
+
+```{r p3-10-cv-rmse}
+cv_df =
+  cv_df |>
+  mutate(
+    rmse_proposed = map2_dbl(
+      proposed_fit, test, rmse
+    ),
+    rmse_main_effects = map2_dbl(
+      main_effects_fit, test, rmse
+    ),
+    rmse_interaction = map2_dbl(
+      interaction_fit, test, rmse
+    )
+  )
+```
+
+I evaluated the predictive performance of the three candidate models using 100 Monte
+Carlo cross-validation splits. In each iteration, approximately 80% of the dataset
+(3,473 observations) was assigned to training and 20% (869 observations) to testing. 
+The same training and testing datasets were used for all three models within each 
+iteration to ensure a fair comparison.
+
+Each model was fitted to the training data using the `map()` function, and 
+its predictive performance was evaluated on the corresponding held-out testing 
+data using root mean squared error (RMSE). The `map2_dbl()` function was used to 
+pair each fitted model with its corresponding testing dataset.
+
+All 100 cross-validation iterations successfully produced finite RMSE estimates 
+for each of the three models, yielding a total of 300 testing RMSE values. 
+These estimates were used to examine the distribution of prediction errors 
+and compare predictive performance across the three candidate models.
+
 
 ## Comparison of Prediction Error
+```{r p3-11-rmse-long}
+birthweight_rmse_long =
+  cv_df |>
+  select(.id, starts_with("rmse_")) |>
+  pivot_longer(
+    cols = starts_with("rmse_"),
+    names_to = "model",
+    names_prefix = "rmse_",
+    values_to = "rmse"
+  ) |>
+  mutate(
+    model = fct_inorder(model)
+  )
+```
+
+```{r p3-12-rmse-plot}
+birthweight_rmse_long |>
+  ggplot(aes(x = model, y = rmse)) +
+  geom_violin(fill = "steelblue", alpha = 0.5) +
+  scale_x_discrete(
+    labels = c(
+      proposed = "Proposed",
+      main_effects = "Main effects",
+      interaction = "Interaction"
+    )
+  ) +
+  labs(
+    title = "Cross-Validated Prediction Error for Birthweight Models",
+    subtitle = "Based on 100 Monte Carlo cross-validation splits",
+    x = "Regression model",
+    y = "Testing RMSE (grams)"
+  )
+```
+
+```{r p3-13-rmse-summary}
+rmse_summary =
+  birthweight_rmse_long |>
+  group_by(model) |>
+  summarize(
+    mean_rmse = mean(rmse),
+    median_rmse = median(rmse),
+    sd_rmse = sd(rmse)
+  ) |>
+  arrange(mean_rmse)
+
+rmse_summary |>
+  knitr::kable(
+    digits = 2,
+    col.names = c(
+      "Model",
+      "Mean RMSE",
+      "Median RMSE",
+      "SD of RMSE"
+    )
+  )
+```
+
+Across the 100 Monte Carlo cross-validation splits, the proposed model achieved 
+the lowest mean testing RMSE (281.33 grams), followed by the interaction 
+model (288.60 grams) and the main-effects model (332.23 grams). 
+The proposed model reduced the mean prediction error by approximately 
+50.90 grams compared with the main-effects model and by 7.27 grams 
+compared with the interaction model.
+
+The violin plot showed that the main-effects model generally had higher prediction 
+errors and greater variability across the cross-validation splits. In contrast, 
+the RMSE distributions of the proposed and interaction models overlapped 
+considerably, suggesting that the improvement offered by the proposed model 
+over the interaction model was relatively modest. The proposed model also had 
+the lowest standard deviation of RMSE (8.36 grams), indicating relatively 
+consistent predictive performance across the repeated data splits.
+
+Overall, the proposed model, which incorporated infant measurements, gestational age, 
+and maternal characteristics, provided the best predictive performance among the 
+three candidate models. Although the residual diagnostics identified some 
+limitations, particularly at lower fitted birthweights, the cross-validation 
+results supported the proposed model as the preferred model for prediction 
+within this dataset.
